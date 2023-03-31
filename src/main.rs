@@ -1,5 +1,5 @@
 use clap::Parser;
-use webex_api_device_auth::webex;
+use webex::{self};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
