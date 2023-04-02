@@ -13,7 +13,8 @@ pub struct DeviceAuthenticator {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct VerificationToken {
-    code: String,
+    user_code: String,
+    device_code: String,
     verification_uri: String,
     verification_uri_complete: String,
     polling_interval: u64,
@@ -21,7 +22,7 @@ pub struct VerificationToken {
 
 #[derive(Debug)]
 pub enum Error {
-    HttpRequestError,
+    HttpRequestError(u16),
     ParsingError,
     GenericError,
 }
@@ -32,7 +33,10 @@ pub enum Error {
 impl From<reqwest::Error> for Error {
     fn from(error: reqwest::Error) -> Error {
         if error.is_status() {
-            Error::HttpRequestError
+            match error.status() {
+                Some(status_code) => Error::HttpRequestError(status_code.as_u16()),
+                None => Error::GenericError
+            }
         } else if error.is_decode() {
             Error::ParsingError
         } else {
@@ -87,7 +91,8 @@ impl DeviceAuthenticator {
         let token = response.json::<AuthorizeResponse>().await?;
 
         Ok(VerificationToken {
-            code: token.device_code,
+            user_code: token.user_code,
+            device_code: token.device_code,
             verification_uri: token.verification_uri,
             verification_uri_complete: token.verification_uri_complete,
             polling_interval: token.interval,
@@ -102,7 +107,7 @@ impl DeviceAuthenticator {
 
         let params = [
             ("grant_type", GRANT_TYPE),
-            ("device_code", &verification_token.code),
+            ("device_code", &verification_token.device_code),
             ("client_id", &self.client_id),
         ];
 
@@ -130,7 +135,7 @@ impl DeviceAuthenticator {
             }
 
             if response.status() != 428 {
-                return Err(Error::HttpRequestError);
+                return Err(Error::HttpRequestError(response.status().as_u16()));
             }
         }
     }
