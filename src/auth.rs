@@ -35,7 +35,7 @@ impl From<reqwest::Error> for Error {
         if error.is_status() {
             match error.status() {
                 Some(status_code) => Error::HttpRequestError(status_code.as_u16()),
-                None => Error::GenericError
+                None => Error::GenericError,
             }
         } else if error.is_decode() {
             Error::ParsingError

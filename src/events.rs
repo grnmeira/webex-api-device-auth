@@ -1,5 +1,5 @@
 struct EventListener;
 
-async fn listen_for_events(bearer: &str) -> EventListener {
-    return EventListener{};
+async fn listen_for_events(_bearer: &str) -> EventListener {
+    EventListener {}
 }
