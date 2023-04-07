@@ -14,6 +14,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
+        println!("{:#?}", e);
         if let Some(status_code) = e.status() {
             Error::HttpStatus(status_code.as_u16())
         } else {
@@ -28,29 +29,23 @@ pub struct Client {
 }
 
 #[allow(dead_code)]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Default, Debug)]
+#[serde(rename_all="camelCase")]
 pub struct Device {
-    #[serde(rename = "webSocketUrl")]
-    websocket_url: String,
+    url: Option<String>,
+    device_type: Option<String>,
+    name: Option<String>,
+    model: Option<String>,
+    localized_model: Option<String>,
+    system_name: Option<String>,
+    system_version: Option<String>,
+    #[serde(skip_serializing)]
+    websocket_url: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Devices {
     devices: Vec<Device>,
-}
-
-#[derive(Serialize, Debug)]
-pub struct DeviceRequest {
-    #[serde(rename = "deviceType")]
-    device_type: String,
-    name: String,
-    model: String,
-    #[serde(rename = "localizedModel")]
-    localized_model: String,
-    #[serde(rename = "systemName")]
-    system_name: String,
-    #[serde(rename = "systemVersion")]
-    system_version: String,
 }
 
 impl Client {
@@ -79,13 +74,14 @@ impl Client {
     }
 
     pub async fn post_devices(&self) -> Result<Device> {
-        let device_object = DeviceRequest {
-            device_type: "pixoo".to_string(),
-            name: "pixoo-integration".to_string(),
-            model: "pixoo-64".to_string(),
-            localized_model: "".to_string(),
-            system_name: "Windows".to_string(),
-            system_version: "10".to_string(),
+        let device_object = Device {
+            device_type: Some("UNKNOWN".to_string()),
+            name: Some("pixoo-integration".to_string()),
+            model: Some("pixoo-64".to_string()),
+            localized_model: Some("".to_string()),
+            system_name: Some("Windows".to_string()),
+            system_version: Some("10".to_string()),
+            ..Default::default()
         };
         let response = self
             .reqwest_client
@@ -98,5 +94,16 @@ impl Client {
         let json_result = response.json::<Device>().await?;
 
         Ok(json_result)
+    }
+
+    pub async fn delete_device(&self, ) -> Result<()> {
+        self
+            .reqwest_client
+            .delete("https://wdm-a.wbx2.com/wdm/api/v1/devices/")
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .await?;
+
+        Ok(())
     }
 }
