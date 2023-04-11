@@ -1,24 +1,13 @@
 use clap::Parser;
-use serde::Deserialize;
 use webex::{self};
+use tokio_tungstenite as tungstenite;
+use futures_util::{StreamExt};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short = 't', help = "Bearer token")]
     bearer_token: String,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug)]
-struct Device {
-    #[serde(rename="webSocketUrl")]
-    websocket_url: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct Devices {
-    devices: Vec<Device>,
 }
 
 #[tokio::main]
@@ -36,6 +25,19 @@ async fn main() {
         device.unwrap()
     };
 
+    println!("{:#?}", device);
+
+    let websocket_url = device.websocket_url.as_ref().expect("No websocket URL for device");
+
+    let url = url::Url::parse(&websocket_url).unwrap();
+    let (ws_stream, _) = tungstenite::connect_async_tls_with_config(url, None, None).await.expect("Failed to connect");
+    println!("WebSocket handshake has been successfully completed");
+
+    let (_, ws_stream) = ws_stream.split();
+    ws_stream.for_each(|message| async move {
+        println!("{:#?}", message);
+    }).await;
+
     //let device = webex_client.post_devices().await.expect("Error creating device");
     //let devices = webex_client.get_devices().await.expect("Error requesting devices");
 
@@ -46,6 +48,4 @@ async fn main() {
     //         }
     //     }
     // }
-
-    println!("{:#?}", device);
 }

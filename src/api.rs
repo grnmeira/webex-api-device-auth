@@ -41,7 +41,7 @@ pub struct Device {
     localized_model: Option<String>,
     system_name: Option<String>,
     system_version: Option<String>,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, rename="webSocketUrl")]
     pub websocket_url: Option<String>,
 }
 
