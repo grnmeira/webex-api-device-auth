@@ -1,7 +1,7 @@
 use clap::Parser;
-use webex::{self};
+use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use futures_util::{StreamExt};
+use webex::{self};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -15,19 +15,31 @@ async fn main() {
     let args = Args::parse();
     let webex_client = webex::api::Client::new(&args.bearer_token);
 
-    let devices = webex_client.get_devices().await.expect("Error obtaining current registered devices");
+    let devices = webex_client
+        .get_devices()
+        .await
+        .expect("Error obtaining current registered devices");
 
-    let device = devices.devices.into_iter().find(|d| d.name == Some("pixoo-integration".to_string()));
+    let device = devices
+        .devices
+        .into_iter()
+        .find(|d| d.name == Some("pixoo-integration".to_string()));
 
     let device = if device.is_none() {
-        webex_client.post_devices().await.expect("Error creating device")
+        webex_client
+            .post_devices()
+            .await
+            .expect("Error creating device")
     } else {
         device.unwrap()
     };
 
     println!("{:#?}", device);
 
-    let websocket_url = device.websocket_url.as_ref().expect("No websocket URL for device");
+    let websocket_url = device
+        .websocket_url
+        .as_ref()
+        .expect("No websocket URL for device");
 
     let request = http::Request::builder()
         .uri(websocket_url)
@@ -39,30 +51,17 @@ async fn main() {
         .header("Upgrade", "websocket")
         .body(())
         .unwrap();
-    
-    let (ws_stream, _) = connect_async(request).await.expect("Failed to connect");
+
+    let (mut ws_stream, _) = connect_async(request).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
 
-    ws_stream.for_each(|message| async move {
-        if let Ok(message) = message {
-            match message {
-                Message::Ping(data) => ws_stream.send(Message::Pong(data)),
-                Message::Binary(_) => println!("{}", message),
-                _ =>()
+    while let Some(Ok(message)) = ws_stream.next().await {
+        match message {
+            Message::Ping(data) => {
+                let _ = ws_stream.send(Message::Pong(data)).await;
             }
-        } else {
-            println!("Error while receiving message from server: {:#?}", message)
+            Message::Binary(_) => println!("{}", message),
+            _ => (),
         }
-    }).await;
-
-    //let device = webex_client.post_devices().await.expect("Error creating device");
-    //let devices = webex_client.get_devices().await.expect("Error requesting devices");
-
-    // for device in devices.devices.iter() {
-    //     if device.device_type == Some("UNKNOWN".to_string()) {
-    //         if let Some(device_url) = &device.url {
-    //             webex_client.delete_device(&device_url).await.expect("Failure deleting device");
-    //         }
-    //     }
-    // }
+    }
 }

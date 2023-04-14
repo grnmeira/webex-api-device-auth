@@ -32,7 +32,7 @@ pub struct Client {
 
 #[allow(dead_code)]
 #[derive(Deserialize, Serialize, Default, Debug)]
-#[serde(rename_all="camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct Device {
     pub url: Option<String>,
     pub device_type: Option<String>,
@@ -41,7 +41,7 @@ pub struct Device {
     localized_model: Option<String>,
     system_name: Option<String>,
     system_version: Option<String>,
-    #[serde(skip_serializing, rename="webSocketUrl")]
+    #[serde(skip_serializing, rename = "webSocketUrl")]
     pub websocket_url: Option<String>,
 }
 
@@ -53,13 +53,13 @@ pub struct Devices {
 #[derive(Deserialize, Debug)]
 pub struct WebexError {
     code: Option<String>,
-    reason: Option<String>
+    reason: Option<String>,
 }
 
 impl Client {
-    pub fn new(bearer_token: &String) -> Client {
+    pub fn new(bearer_token: &str) -> Client {
         Client {
-            bearer_token: bearer_token.clone(),
+            bearer_token: bearer_token.to_owned(),
             reqwest_client: reqwest::Client::new(),
         }
     }
@@ -75,16 +75,12 @@ impl Client {
 
         if response.status().is_success() {
             let json_result = response.json::<Devices>().await?;
-            return Ok(json_result)
+            return Ok(json_result);
         }
 
         match response.status().as_u16() {
-            code @ 400 ..= 499 => {
-                Err(Error::HttpStatus(code, None))
-            },
-            error_code => {
-                Err(Error::HttpStatus(error_code, None))
-            }
+            code @ 400..=499 => Err(Error::HttpStatus(code, None)),
+            error_code => Err(Error::HttpStatus(error_code, None)),
         }
     }
 
@@ -109,22 +105,17 @@ impl Client {
 
         if response.status().is_success() {
             let json_result = response.json::<Device>().await?;
-            return Ok(json_result)
+            return Ok(json_result);
         }
 
         match response.status().as_u16() {
-            code @ 400 ..= 499 => {
-                Err(Error::HttpStatus(code, None))
-            },
-            error_code => {
-                Err(Error::HttpStatus(error_code, None))
-            }
+            code @ 400..=499 => Err(Error::HttpStatus(code, None)),
+            error_code => Err(Error::HttpStatus(error_code, None)),
         }
     }
 
     pub async fn delete_device(&self, device_url: &str) -> Result<()> {
-        self
-            .reqwest_client
+        self.reqwest_client
             .delete(device_url)
             .bearer_auth(&self.bearer_token)
             .send()
