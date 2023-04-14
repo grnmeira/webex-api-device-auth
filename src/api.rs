@@ -57,9 +57,9 @@ pub struct WebexError {
 }
 
 impl Client {
-    pub fn new(bearer_token: String) -> Client {
+    pub fn new(bearer_token: &String) -> Client {
         Client {
-            bearer_token,
+            bearer_token: bearer_token.clone(),
             reqwest_client: reqwest::Client::new(),
         }
     }

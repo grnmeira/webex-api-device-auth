@@ -1,6 +1,6 @@
 use clap::Parser;
 use webex::{self};
-use tokio_tungstenite as tungstenite;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use futures_util::{StreamExt};
 
 #[derive(Parser, Debug)]
@@ -13,7 +13,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let webex_client = webex::api::Client::new(args.bearer_token);
+    let webex_client = webex::api::Client::new(&args.bearer_token);
 
     let devices = webex_client.get_devices().await.expect("Error obtaining current registered devices");
 
@@ -29,13 +29,30 @@ async fn main() {
 
     let websocket_url = device.websocket_url.as_ref().expect("No websocket URL for device");
 
-    let url = url::Url::parse(&websocket_url).unwrap();
-    let (ws_stream, _) = tungstenite::connect_async_tls_with_config(url, None, None).await.expect("Failed to connect");
+    let request = http::Request::builder()
+        .uri(websocket_url)
+        .header("Authorization", format!("Bearer {}", args.bearer_token))
+        .header("Sec-Websocket-Key", "APCjIuq1XI4F7MmpLXLijg==")
+        .header("Sec-Websocket-Version", "13")
+        .header("Connection", "Upgrade")
+        .header("Host", "mercury-connection-partition2-a.wbx2.com")
+        .header("Upgrade", "websocket")
+        .body(())
+        .unwrap();
+    
+    let (ws_stream, _) = connect_async(request).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
 
-    let (_, ws_stream) = ws_stream.split();
     ws_stream.for_each(|message| async move {
-        println!("{:#?}", message);
+        if let Ok(message) = message {
+            match message {
+                Message::Ping(data) => ws_stream.send(Message::Pong(data)),
+                Message::Binary(_) => println!("{}", message),
+                _ =>()
+            }
+        } else {
+            println!("Error while receiving message from server: {:#?}", message)
+        }
     }).await;
 
     //let device = webex_client.post_devices().await.expect("Error creating device");
