@@ -1,7 +1,24 @@
+use chrono::serde::ts_milliseconds_option;
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use webex::{self};
+
+#[allow(dead_code)]
+#[derive(Deserialize, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub id: Option<String>,
+    //pub data: Option<String>,
+    pub filter_message: Option<bool>,
+    //pub headers: Option<String>,
+    pub sequence_number: Option<u32>,
+    #[serde(with = "ts_milliseconds_option")]
+    pub timestamp: Option<DateTime<Utc>>,
+    pub tracking_id: Option<String>,
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -60,7 +77,12 @@ async fn main() {
             Message::Ping(data) => {
                 let _ = ws_stream.send(Message::Pong(data)).await;
             }
-            Message::Binary(_) => println!("{}", message),
+            Message::Binary(data) => {
+                let e = serde_json::from_str::<Event>(
+                    &String::from_utf8(data).expect("Error decoding UT8"),
+                );
+                println!("{:#?}", e);
+            }
             _ => (),
         }
     }
