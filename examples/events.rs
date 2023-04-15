@@ -2,16 +2,33 @@ use chrono::serde::ts_milliseconds_option;
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use webex::{self};
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "eventType")]
+pub enum Data {
+    #[serde(rename = "apheleia.subscription_update")]
+    SubscriptionUpdate {
+        subject: Option<String>,
+        category: Option<String>,
+        status: Option<String>
+    },
+    #[serde(rename = "conversation.activity")]
+    ConversationActivity {
+        id: String
+    }
+}
 
 #[allow(dead_code)]
 #[derive(Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
     pub id: Option<String>,
-    //pub data: Option<String>,
+    pub data: Option<Data>,
     pub filter_message: Option<bool>,
     //pub headers: Option<String>,
     pub sequence_number: Option<u32>,
@@ -78,6 +95,7 @@ async fn main() {
                 let _ = ws_stream.send(Message::Pong(data)).await;
             }
             Message::Binary(data) => {
+                println!("{:#?}", &String::from_utf8_lossy(&data));
                 let e = serde_json::from_str::<Event>(
                     &String::from_utf8(data).expect("Error decoding UT8"),
                 );
