@@ -42,6 +42,8 @@ pub struct Event {
 struct Args {
     #[arg(short = 't', help = "Bearer token")]
     bearer_token: String,
+    #[arg(short = 'd', help = "Device ID")]
+    device_id: Option<String>
 }
 
 #[tokio::main]
