@@ -1,5 +1,19 @@
+use chrono::serde::ts_milliseconds_option;
+use chrono::{DateTime, Utc};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio_tungstenite::tungstenite;
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    connect_async, tungstenite, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
+
+type WebsocketStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+#[derive(Deserialize, Debug)]
+pub struct WebexError {
+    code: Option<String>,
+    reason: Option<String>,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -9,6 +23,8 @@ pub enum Error {
     JsonParsingError(String),
     #[error("generic error: {0}")]
     GenericError(String),
+    #[error("websocket error: {0}")]
+    WebsocketError(String),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -23,6 +39,12 @@ impl From<reqwest::Error> for Error {
         } else {
             Error::GenericError(format!("{}", e))
         }
+    }
+}
+
+impl From<tungstenite::error::Error> for Error {
+    fn from(e: tungstenite::error::Error) -> Self {
+        Error::WebsocketError(e.to_string())
     }
 }
 
@@ -47,81 +69,131 @@ pub struct Devices {
     pub devices: Vec<Device>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
-pub struct WebexError {
-    code: Option<String>,
-    reason: Option<String>,
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "eventType")]
+pub enum Data {
+    #[serde(rename = "apheleia.subscription_update")]
+    SubscriptionUpdate {
+        subject: Option<String>,
+        category: Option<String>,
+        status: Option<String>,
+    },
+    #[serde(rename = "conversation.activity")]
+    ConversationActivity { id: String },
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub id: Option<String>,
+    pub data: Option<Data>,
+    pub filter_message: Option<bool>,
+    //pub headers: Option<String>,
+    pub sequence_number: Option<u32>,
+    #[serde(with = "ts_milliseconds_option")]
+    pub timestamp: Option<DateTime<Utc>>,
+    pub tracking_id: Option<String>,
 }
 
 pub struct EventListener {
-    bearer_token: String,
-    device_id: Option<String>
+    stream: WebsocketStream,
 }
 
 impl EventListener {
-    pub fn new(bearer_token: &str) -> EventListener {
-        EventListener { 
-            bearer_token: bearer_token.to_owned(), 
-            device_id: None
-        }
+    fn new(stream: WebsocketStream) -> EventListener {
+        EventListener { stream }
     }
 
-    pub fn new_with_existing_device(bearer_token: &str, device_id: &str) -> EventListener {
-        EventListener { 
-            bearer_token: bearer_token.to_owned(), 
-            device_id: Some(device_id.to_owned())
+    pub async fn next(&mut self) -> Result<Event> {
+        while let Some(Ok(message)) = self.stream.next().await {
+            match message {
+                Message::Ping(data) => {
+                    self.stream.send(Message::Pong(data)).await?;
+                }
+                Message::Binary(data) => {
+                    println!("{:#?}", &String::from_utf8_lossy(&data));
+                    return String::from_utf8(data)
+                        .map_err(|err| Error::JsonParsingError(err.to_string()))
+                        .and_then(|string| {
+                            serde_json::from_str::<Event>(&string)
+                                .map_err(|err| Error::JsonParsingError(err.to_string()))
+                        });
+                }
+                _ => (),
+            }
         }
+
+        Err(Error::WebsocketError(
+            "failed to read event from stream".to_owned(),
+        ))
     }
 }
 
 pub struct Client {
+    device_id: Option<String>,
     bearer_token: String,
     reqwest_client: reqwest::Client,
 }
 
 impl Client {
-    pub fn new(bearer_token: &str) -> Client {
+    pub fn new(bearer_token: &str, device_id: Option<&str>) -> Client {
         Client {
             bearer_token: bearer_token.to_owned(),
             reqwest_client: reqwest::Client::new(),
+            device_id: match device_id {
+                Some(id) => Some(id.to_owned()),
+                _ => None,
+            },
         }
     }
 
-    pub async fn listen_to_events(&self, device_id: Option<&str>) -> Result<EventListener> {
-        if let Some(device_id) = device_id {
-            let device = self.get_device(device_id).await?;
+    pub async fn listen_to_events(&self) -> Result<EventListener> {
+        let (device, device_id) = match &self.device_id {
+            Some(device_id) => (self.get_device(&device_id).await?, device_id),
+            _ => {
+                return Err(Error::GenericError(
+                    "device creation not supported for now".to_owned(),
+                ));
+            }
+        };
 
-            let websocket_url = match device.websocket_url.as_ref() {
-                Some(url) => url,
-                None => return Err(Error::GenericError("device has no Websocket URL".to_owned()))
-            };
+        let Some(websocket_url) = device.websocket_url.as_ref() else {
+            return Err(Error::GenericError("device has no Websocket URL".to_owned()));
+        };
 
-            let host = match url::Host::parse(&websocket_url) {
-                Ok(host) => host,
-                Err(_) => return Err(Error::GenericError(format!("unable to extract host from URL: {}", websocket_url)))
-            };
+        let Ok(host) = url::Host::parse(&websocket_url) else {
+            return Err(Error::GenericError(format!("unable to extract host from URL: {}", websocket_url)))
+        };
 
-            let request = http::Request::builder()
-                .uri(websocket_url)
-                .header("Authorization", format!("Bearer {}", self.bearer_token))
-                .header("Sec-Websocket-Key", tungstenite::handshake::client::generate_key())
-                .header("Sec-Websocket-Version", "13")
-                .header("Connection", "Upgrade")
-                .header("Host", host.to_string())
-                .header("Upgrade", "websocket")
-                .body(())
-                .unwrap();
+        let request = http::Request::builder()
+            .uri(websocket_url)
+            .header("Authorization", format!("Bearer {}", self.bearer_token))
+            .header(
+                "Sec-Websocket-Key",
+                tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-Websocket-Version", "13")
+            .header("Connection", "Upgrade")
+            .header("Host", host.to_string())
+            .header("Upgrade", "websocket")
+            .body(())
+            .unwrap();
 
-            return Ok(EventListener::new(&self.bearer_token))
-        }
+        let (ws_stream, _) = connect_async(request).await?;
 
-        Ok(EventListener::new(&self.bearer_token))
+        Ok(EventListener::new(ws_stream))
     }
 
     pub async fn get_device(&self, device_id: &str) -> Result<Device> {
         let response = self
             .reqwest_client
-            .get(format!("https://wdm-a.wbx2.com/wdm/api/v1/devices/{}", device_id))
+            .get(format!(
+                "https://wdm-a.wbx2.com/wdm/api/v1/devices/{}",
+                device_id
+            ))
             .header("Accept", "application/json")
             .bearer_auth(&self.bearer_token)
             .send()
