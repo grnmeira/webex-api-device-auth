@@ -17,12 +17,7 @@ async fn main() {
     let mut event_listener = webex_client.listen_to_events().await.unwrap();
 
     loop {
-        match event_listener.next().await {
-            Ok(event) => println!("{:#?}", event),
-            Err(e) => {
-                println!("{:#?}", e);
-                break;
-            }
-        }
+        let event = event_listener.next().await.unwrap();
+        println!("{:#?}", event);
     }
 }

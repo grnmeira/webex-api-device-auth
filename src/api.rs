@@ -131,7 +131,6 @@ impl EventListener {
                     self.stream.send(Message::Pong(data)).await?;
                 }
                 Message::Binary(data) => {
-                    println!("{:#?}", &String::from_utf8_lossy(&data));
                     return String::from_utf8(data)
                         .map_err(|err| Error::JsonParsingError(err.to_string()))
                         .and_then(|string| {
