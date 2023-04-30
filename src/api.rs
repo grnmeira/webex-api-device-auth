@@ -9,6 +9,7 @@ use tokio_tungstenite::{
 
 type WebsocketStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 pub struct WebexError {
     code: Option<String>,
@@ -44,7 +45,16 @@ impl From<reqwest::Error> for Error {
 
 impl From<tungstenite::error::Error> for Error {
     fn from(e: tungstenite::error::Error) -> Self {
-        Error::WebsocketError(e.to_string())
+        match &e {
+            tungstenite::error::Error::Http(response) => {
+                if let Some(body) = response.body() {
+                    Error::GenericError(String::from_utf8_lossy(body).to_string())
+                } else {
+                    Error::GenericError(format!("HTTP error from websocket: {}", e))
+                }
+            }
+            _ => Error::WebsocketError(e.to_string()),
+        }
     }
 }
 
@@ -72,6 +82,13 @@ pub struct Devices {
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct Activity {
+    pub id: String,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 #[serde(tag = "eventType")]
 pub enum Data {
     #[serde(rename = "apheleia.subscription_update")]
@@ -81,7 +98,7 @@ pub enum Data {
         status: Option<String>,
     },
     #[serde(rename = "conversation.activity")]
-    ConversationActivity { id: String },
+    ConversationActivity { activity: Activity },
 }
 
 #[allow(dead_code)]
@@ -143,30 +160,29 @@ impl Client {
         Client {
             bearer_token: bearer_token.to_owned(),
             reqwest_client: reqwest::Client::new(),
-            device_id: match device_id {
-                Some(id) => Some(id.to_owned()),
-                _ => None,
-            },
+            device_id: device_id.map(|id| id.to_owned()),
         }
     }
 
     pub async fn listen_to_events(&self) -> Result<EventListener> {
-        let (device, device_id) = match &self.device_id {
-            Some(device_id) => (self.get_device(&device_id).await?, device_id),
-            _ => {
-                return Err(Error::GenericError(
-                    "device creation not supported for now".to_owned(),
-                ));
-            }
+        let device = match &self.device_id {
+            Some(device_id) => self.get_device(device_id).await?,
+            _ => self.post_devices().await?,
         };
 
         let Some(websocket_url) = device.websocket_url.as_ref() else {
             return Err(Error::GenericError("device has no Websocket URL".to_owned()));
         };
 
-        let Ok(host) = url::Host::parse(&websocket_url) else {
-            return Err(Error::GenericError(format!("unable to extract host from URL: {}", websocket_url)))
-        };
+        let url = url::Url::parse(websocket_url).or(Err(Error::GenericError(format!(
+            "parsing URL {}",
+            &websocket_url
+        ))))?;
+
+        let host = url.host_str().ok_or(Error::GenericError(format!(
+            "unable to obtain host from URL {}",
+            url
+        )))?;
 
         let request = http::Request::builder()
             .uri(websocket_url)
