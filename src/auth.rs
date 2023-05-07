@@ -13,10 +13,10 @@ pub struct DeviceAuthenticator {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct VerificationToken {
-    user_code: String,
+    pub user_code: String,
     device_code: String,
-    verification_uri: String,
-    verification_uri_complete: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: String,
     polling_interval: u64,
 }
 
