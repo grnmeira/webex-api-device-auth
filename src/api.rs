@@ -99,6 +99,8 @@ pub enum Data {
     },
     #[serde(rename = "conversation.activity")]
     ConversationActivity { activity: Activity },
+    #[serde(other)]
+    UnkownData,
 }
 
 #[allow(dead_code)]
@@ -108,7 +110,6 @@ pub struct Event {
     pub id: Option<String>,
     pub data: Option<Data>,
     pub filter_message: Option<bool>,
-    //pub headers: Option<String>,
     pub sequence_number: Option<u32>,
     #[serde(with = "ts_milliseconds_option")]
     pub timestamp: Option<DateTime<Utc>>,
