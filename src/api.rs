@@ -116,6 +116,13 @@ pub struct Event {
     pub tracking_id: Option<String>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Person {
+    pub id: String,
+    pub status: String
+}
+
 pub struct EventListener {
     stream: WebsocketStream,
 }
@@ -284,5 +291,23 @@ impl Client {
             .await?;
 
         Ok(())
+    }
+
+    pub async fn get_my_own_details(&self) -> Result<Person> {
+        let response = self.reqwest_client
+        .get("https://webexapis.com/v1/people/me")
+        .bearer_auth(&self.bearer_token)
+        .send()
+        .await?;
+
+        if response.status().is_success() {
+            let json_result = response.json::<Person>().await?;
+            return Ok(json_result);
+        }
+
+        match response.status().as_u16() {
+            code @ 400..=499 => Err(Error::HttpStatus(code, None)),
+            error_code => Err(Error::HttpStatus(error_code, None)),
+        }
     }
 }
