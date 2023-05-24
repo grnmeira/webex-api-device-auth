@@ -1,127 +1,12 @@
-use chrono::serde::ts_milliseconds_option;
-use chrono::{DateTime, Utc};
+use crate::dto;
+use crate::error::{Error, Result};
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
     connect_async, tungstenite, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 
 type WebsocketStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug)]
-pub struct WebexError {
-    code: Option<String>,
-    reason: Option<String>,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("HTTP error with status: {0}")]
-    HttpStatus(u16, Option<WebexError>),
-    #[error("JSON parsing error: {0}")]
-    JsonParsingError(String),
-    #[error("generic error: {0}")]
-    GenericError(String),
-    #[error("websocket error: {0}")]
-    WebsocketError(String),
-}
-
-type Result<T> = std::result::Result<T, Error>;
-
-impl From<reqwest::Error> for Error {
-    fn from(e: reqwest::Error) -> Self {
-        println!("{:#?}", e);
-        if let Some(status_code) = e.status() {
-            Error::HttpStatus(status_code.as_u16(), None)
-        } else if e.is_decode() {
-            Error::JsonParsingError(format!("{}", e))
-        } else {
-            Error::GenericError(format!("{}", e))
-        }
-    }
-}
-
-impl From<tungstenite::error::Error> for Error {
-    fn from(e: tungstenite::error::Error) -> Self {
-        match &e {
-            tungstenite::error::Error::Http(response) => {
-                if let Some(body) = response.body() {
-                    Error::GenericError(String::from_utf8_lossy(body).to_string())
-                } else {
-                    Error::GenericError(format!("HTTP error from websocket: {}", e))
-                }
-            }
-            _ => Error::WebsocketError(e.to_string()),
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Serialize, Default, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Device {
-    pub url: Option<String>,
-    pub device_type: Option<String>,
-    pub name: Option<String>,
-    model: Option<String>,
-    localized_model: Option<String>,
-    system_name: Option<String>,
-    system_version: Option<String>,
-    #[serde(skip_serializing, rename = "webSocketUrl")]
-    pub websocket_url: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug)]
-pub struct Devices {
-    pub devices: Vec<Device>,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Activity {
-    pub id: String,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-#[serde(tag = "eventType")]
-pub enum Data {
-    #[serde(rename = "apheleia.subscription_update")]
-    SubscriptionUpdate {
-        subject: Option<String>,
-        category: Option<String>,
-        status: Option<String>,
-    },
-    #[serde(rename = "conversation.activity")]
-    ConversationActivity { activity: Activity },
-    #[serde(other)]
-    UnkownData,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Default, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Event {
-    pub id: Option<String>,
-    pub data: Option<Data>,
-    pub filter_message: Option<bool>,
-    pub sequence_number: Option<u32>,
-    #[serde(with = "ts_milliseconds_option")]
-    pub timestamp: Option<DateTime<Utc>>,
-    pub tracking_id: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Person {
-    pub id: String,
-    pub status: String
-}
 
 pub struct EventListener {
     stream: WebsocketStream,
@@ -132,7 +17,7 @@ impl EventListener {
         EventListener { stream }
     }
 
-    pub async fn next(&mut self) -> Result<Event> {
+    pub async fn next(&mut self) -> Result<dto::Event> {
         while let Some(Ok(message)) = self.stream.next().await {
             match message {
                 Message::Ping(data) => {
@@ -142,7 +27,7 @@ impl EventListener {
                     return String::from_utf8(data)
                         .map_err(|err| Error::JsonParsingError(err.to_string()))
                         .and_then(|string| {
-                            serde_json::from_str::<Event>(&string)
+                            serde_json::from_str::<dto::Event>(&string)
                                 .map_err(|err| Error::JsonParsingError(err.to_string()))
                         });
                 }
@@ -210,7 +95,7 @@ impl Client {
         Ok(EventListener::new(ws_stream))
     }
 
-    pub async fn get_device(&self, device_id: &str) -> Result<Device> {
+    pub async fn get_device(&self, device_id: &str) -> Result<dto::Device> {
         let response = self
             .reqwest_client
             .get(format!(
@@ -223,7 +108,7 @@ impl Client {
             .await?;
 
         if response.status().is_success() {
-            let json_result = response.json::<Device>().await?;
+            let json_result = response.json::<dto::Device>().await?;
             return Ok(json_result);
         }
 
@@ -233,7 +118,7 @@ impl Client {
         }
     }
 
-    pub async fn get_devices(&self) -> Result<Devices> {
+    pub async fn get_devices(&self) -> Result<dto::Devices> {
         let response = self
             .reqwest_client
             .get("https://wdm-a.wbx2.com/wdm/api/v1/devices")
@@ -243,7 +128,7 @@ impl Client {
             .await?;
 
         if response.status().is_success() {
-            let json_result = response.json::<Devices>().await?;
+            let json_result = response.json::<dto::Devices>().await?;
             return Ok(json_result);
         }
 
@@ -253,8 +138,8 @@ impl Client {
         }
     }
 
-    pub async fn post_devices(&self) -> Result<Device> {
-        let device_object = Device {
+    pub async fn post_devices(&self) -> Result<dto::Device> {
+        let device_object = dto::Device {
             device_type: Some("UNKNOWN".to_string()),
             name: Some("pixoo-integration".to_string()),
             model: Some("pixoo-64".to_string()),
@@ -273,7 +158,7 @@ impl Client {
             .await?;
 
         if response.status().is_success() {
-            let json_result = response.json::<Device>().await?;
+            let json_result = response.json::<dto::Device>().await?;
             return Ok(json_result);
         }
 
@@ -293,15 +178,16 @@ impl Client {
         Ok(())
     }
 
-    pub async fn get_my_own_details(&self) -> Result<Person> {
-        let response = self.reqwest_client
-        .get("https://webexapis.com/v1/people/me")
-        .bearer_auth(&self.bearer_token)
-        .send()
-        .await?;
+    pub async fn get_my_own_details(&self) -> Result<dto::Person> {
+        let response = self
+            .reqwest_client
+            .get("https://webexapis.com/v1/people/me")
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .await?;
 
         if response.status().is_success() {
-            let json_result = response.json::<Person>().await?;
+            let json_result = response.json::<dto::Person>().await?;
             return Ok(json_result);
         }
 
